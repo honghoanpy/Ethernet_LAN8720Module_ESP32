@@ -4,6 +4,17 @@
 */
 
 #include <ETH.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WebServer.h>
+
+#include "index.h"  //Web page header file
+
+WebServer server(80);
+
+//Enter your SSID and PASSWORD
+const char* ssid = "TP-Link_0801";
+const char* password = "15126801";
 
 /*
  * ETH_CLOCK_GPIO0_IN   - default: external clock from crystal oscillator
@@ -15,6 +26,9 @@
 #ifdef ETH_CLK_MODE
 #undef ETH_CLK_MODE
 #endif
+
+#define SOFT_AP
+
 #define ETH_CLK_MODE    ETH_CLOCK_GPIO0_IN
 
 // Pin# of the enable signal for the external crystal oscillator (-1 to disable for internal APLL source)
@@ -45,6 +59,8 @@ void WiFiEvent(WiFiEvent_t event)
       break;
     case SYSTEM_EVENT_ETH_CONNECTED:
       Serial.println("ETH Connected");
+      //WiFi.disconnect(true); /* Wifi disconnected */
+      if(WiFi.disconnect(true)) Serial.println("Wifi disconnected");
       break;
     case SYSTEM_EVENT_ETH_GOT_IP:
       Serial.print("ETH MAC: ");
@@ -62,6 +78,9 @@ void WiFiEvent(WiFiEvent_t event)
     case SYSTEM_EVENT_ETH_DISCONNECTED:
       Serial.println("ETH Disconnected");
       eth_connected = false;
+
+      //WiFi.mode(WIFI_STA); //Connectto your wifi
+      WiFi.begin(ssid, password);
       break;
     case SYSTEM_EVENT_ETH_STOP:
       Serial.println("ETH Stopped");
@@ -72,39 +91,89 @@ void WiFiEvent(WiFiEvent_t event)
   }
 }
 
-void testClient(const char * host, uint16_t port)
-{
-  Serial.print("\nconnecting to ");
-  Serial.println(host);
-
-  WiFiClient client;
-  if (!client.connect(host, port)) {
-    Serial.println("connection failed");
-    return;
-  }
-  client.printf("GET / HTTP/1.1\r\nHost: %s\r\n\r\n", host);
-  while (client.connected() && !client.available());
-  while (client.available()) {
-    Serial.write(client.read());
-  }
-
-  Serial.println("closing connection\n");
-  client.stop();
+void WiFiStationConnected(WiFiEvent_t event, WiFiEventInfo_t info){
+  Serial.println("Connected to AP successfully!");
 }
 
+void WiFiGotIP(WiFiEvent_t event, WiFiEventInfo_t info){
+  Serial.println("WiFi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void WiFiStationDisconnected(WiFiEvent_t event, WiFiEventInfo_t info){
+  Serial.println("Disconnected from WiFi access point");
+  // Serial.print("WiFi lost connection. Reason: ");
+  // Serial.println(info.disconnected.reason);
+  // Serial.println("Trying to Reconnect");
+  // WiFi.begin(ssid, password);
+}
+//===============================================================
+// This routine is executed when you open its IP in browser
+//===============================================================
+void handleRoot() {
+ String s = MAIN_page; //Read HTML contents
+ server.send(200, "text/html", s); //Send web page
+}
+ 
+void handleADC() {
+ int a = analogRead(A0);
+ String adcValue = String(a);
+ 
+ server.send(200, "text/plane", adcValue); //Send ADC value only to client ajax request
+}
+//===============================================================
+// Setup
+//===============================================================
 void setup()
 {
   pinMode(ETH_POWER_PIN_ALTERNATIVE, OUTPUT);
   digitalWrite(ETH_POWER_PIN_ALTERNATIVE, HIGH);
   Serial.begin(115200);
+
   WiFi.onEvent(WiFiEvent);
   ETH.begin(ETH_ADDR, ETH_POWER_PIN, ETH_MDC_PIN, ETH_MDIO_PIN, ETH_TYPE, ETH_CLK_MODE);
-}
 
+  WiFi.onEvent(WiFiStationConnected, SYSTEM_EVENT_STA_CONNECTED);
+  WiFi.onEvent(WiFiGotIP, SYSTEM_EVENT_STA_GOT_IP);
+  WiFi.onEvent(WiFiStationDisconnected, SYSTEM_EVENT_STA_DISCONNECTED);
+
+#ifdef SOFT_AP
+  WiFi.mode(WIFI_STA); //Connectto your wifi
+  WiFi.begin(ssid, password);
+
+  Serial.print("Connecting to ");
+  Serial.println(ssid);
+
+  //Wait for WiFi to connect
+  while(WiFi.waitForConnectResult() != WL_CONNECTED){      
+      Serial.print(".");
+    }
+    
+  // //If connection successful show IP address in serial monitor
+  // Serial.println("");
+  // Serial.print("Connected to ");
+  // Serial.println(ssid);
+  // Serial.print("IP address: ");
+  // Serial.println(WiFi.localIP());  //IP address assigned to your ESP
+#endif
+
+  Serial.print("WiFi MAC: ");
+  Serial.println(WiFi.macAddress());
+  Serial.print("ETH MAC: ");
+  Serial.println(ETH.macAddress());
+
+  server.on("/", handleRoot);      //This is display page
+  server.on("/readADC", handleADC);//To get update of ADC Value only
+
+  server.begin();                  //Start server
+  Serial.println("HTTP server started");
+}
+//===============================================================
+// This routine is executed when you open its IP in browser
+//===============================================================
 void loop()
 {
-  if (eth_connected) {
-    testClient("google.com", 80);
-  }
-  delay(10000);
+  server.handleClient();
+  delay(1);
 }
